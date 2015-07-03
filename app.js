@@ -2,8 +2,8 @@ var express = require('express');
 var path = require('path');
 var cookieParser = require('cookie-parser');
 var bodyParser = require('body-parser');
-var todos = require('./routes/todos');
 var cloud = require('./cloud');
+var AV = require('leanengine');
 
 var app = express();
 
@@ -20,11 +20,57 @@ app.use(bodyParser.urlencoded({ extended: false }));
 app.use(cookieParser());
 
 app.get('/', function(req, res) {
-  res.render('index', { currentTime: new Date() })
+  res.render('index');
 })
 
-// 可以将一类的路由单独保存在一个文件中
-app.use('/todos', todos);
+// 测试存储性能
+// url 示例: /p1?c=2&r=1000
+// c 是并发数，r 是总请求数量
+// 因为测试可能耗时很长，所以 http 请求直接响应 ok，测试结果到后台查看日志。
+var PerformanceTest = AV.Object.extend('PerformanceTest');
+app.get('/p1', function(req, res) {
+  var concurrent = req.query.c || 1;
+  var requestCount = req.query.r || 100;
+
+  res.send('ok'); // 因为测试时间可能很长，所以直接返回，测试异步执行，测试结果从后台日志查看
+  console.log('PerformanceTest: concurrent =', concurrent, 'requestCount =', requestCount);
+  
+  var count = 0;
+  var start = new Date();
+  
+  var preRecordTime = start;
+  var preRecordCount = count;
+  
+  var finished = false; 
+ 
+  var save = function() {
+      if (count++ >= requestCount) {
+          if (!finished) {
+            var qps = 1000 / ((new Date() - start) / count)
+            console.log('finished. qps:', qps)
+            finished = true;
+          }
+          return;
+      }
+      if (count % (requestCount / 10) == 0) {
+        var now = new Date();
+        console.log('count:', count, 'qps:', 1000 / ((now - preRecordTime) / (count - preRecordCount)));
+        preRecordTime = now;
+        preRecordCount = count;
+      }
+      new PerformanceTest().save({foo: 'bar'}, {
+          success: function() {
+              save();
+          },
+          error: function(obj, err) {
+              console.error('count:', count, 'err:', err)
+          }
+      })
+  };
+  for (var i = 0; i < concurrent; i++) {
+    save();
+  }
+})
 
 // 如果任何路由都没匹配到，则认为 404
 // 生成一个异常让后面的 err handler 捕获
